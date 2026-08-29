@@ -1,0 +1,43 @@
+{
+  "mode": "local-sweep (RAY_UNAVAILABLE fallback)",
+  "best_config": {
+    "hidden": 64,
+    "lr": 0.003,
+    "dropout": 0.1
+  },
+  "best_val_auroc": 0.9514675334990939,
+  "trials": [
+    {
+      "config": {
+        "hidden": 32,
+        "lr": 0.001,
+        "dropout": 0.1
+      },
+      "val_auroc": 0.8747620102103938
+    },
+    {
+      "config": {
+        "hidden": 32,
+        "lr": 0.003,
+        "dropout": 0.1
+      },
+      "val_auroc": 0.9510511265852948
+    },
+    {
+      "config": {
+        "hidden": 64,
+        "lr": 0.003,
+        "dropout": 0.1
+      },
+      "val_auroc": 0.9514675334990939
+    },
+    {
+      "config": {
+        "hidden": 16,
+        "lr": 0.001,
+        "dropout": 0.1
+      },
+      "val_auroc": 0.8377998791697857
+    }
+  ]
+}

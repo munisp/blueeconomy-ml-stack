@@ -1,0 +1,21 @@
+{
+  "model": "graph-mule-gnn",
+  "version": "0.1.0",
+  "backend": "pyg",
+  "data_source": "SYNTHETIC",
+  "graph": {
+    "companies": 1800,
+    "accounts": 2600,
+    "declarations": 4000,
+    "vessels": 120,
+    "edges": 93440
+  },
+  "test": {
+    "auroc": 0.999182739457339,
+    "auprc": 0.9945175438596492,
+    "recall_at_precision_0.90": 0.9736842105263158,
+    "best_f1": 0.9866666666666666,
+    "best_f1_threshold": 0.6535012125968933
+  },
+  "kind": "classifier"
+}

@@ -21,9 +21,12 @@ def test_declarations_labelled_synthetic_and_fraud_present():
     assert 0.02 < df["is_fraud"].mean() < 0.15
     assert set(df["fraud_type"].unique()) >= {
         "none", "undervaluation", "hs_misclassification", "shell_consignee"}
-    # undervalued rows really are cheap vs reference
+    # undervalued rows really are cheap vs reference: factor 0.25-0.6 applied
+    # to noisy honest prices (lognormal sigma 0.22), so we assert the
+    # distribution is strongly depressed, not a hard per-row cap
     uv = df[df["fraud_type"] == "undervaluation"]
-    assert (uv["price_ratio_vs_reference"] < 0.75).all()
+    assert uv["price_ratio_vs_reference"].mean() < 0.55
+    assert (uv["price_ratio_vs_reference"] < 1.0).mean() > 0.9
 
 
 def test_declarations_features_shape():

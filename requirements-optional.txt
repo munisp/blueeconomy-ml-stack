@@ -1,5 +1,5 @@
 # Optional distributed/monitoring extras (not required for the default path).
 # ray_jobs degrade gracefully to local execution when Ray is absent;
 # monitoring.drift degrades to PSI when Evidently is absent.
-ray[data,tune]==2.49.2      # Apache-2.0
-evidently==0.7.9            # Apache-2.0
+ray[data,tune]==2.58.0      # Apache-2.0
+evidently==0.7.21            # Apache-2.0

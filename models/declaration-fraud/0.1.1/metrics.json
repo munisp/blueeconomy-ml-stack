@@ -1,0 +1,26 @@
+{
+  "model": "declaration-fraud-mlp",
+  "version": "0.1.1",
+  "data_source": "SYNTHETIC",
+  "test": {
+    "auroc": 0.9708187549580394,
+    "auprc": 0.8403889779074061,
+    "recall_at_precision_0.90": 0.6604651162790698,
+    "best_f1": 0.7696476964769647,
+    "best_f1_threshold": 0.9626109004020691,
+    "temperature": 0.9576018452644348
+  },
+  "baseline_lightgbm_test": {
+    "auroc": 0.9706300363241618,
+    "auprc": 0.8238555671038694,
+    "recall_at_precision_0.90": 0.6883720930232559,
+    "best_f1": 0.7893333333333334,
+    "best_f1_threshold": 0.6428571428571429
+  },
+  "splits": {
+    "train": 14000,
+    "val": 3000,
+    "test": 3000
+  },
+  "kind": "classifier"
+}

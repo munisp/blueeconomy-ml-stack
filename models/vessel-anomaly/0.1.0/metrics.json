@@ -1,0 +1,20 @@
+{
+  "model": "vessel-anomaly-autoencoder",
+  "version": "0.1.0",
+  "data_source": "SYNTHETIC",
+  "test": {
+    "auroc": 0.8597806612356876,
+    "auprc": 0.6426809517680839,
+    "recall_at_precision_0.90": 0.44285714285714284,
+    "best_f1": 0.6053811659192826,
+    "best_f1_threshold": 10.593714714050293
+  },
+  "baseline_isoforest_test": {
+    "auroc": 0.9627544021723916,
+    "auprc": 0.5403809099028432,
+    "recall_at_precision_0.90": 0.14642857142857144,
+    "best_f1": 0.5698529411764707,
+    "best_f1_threshold": 0.6037995251358952
+  },
+  "kind": "autoencoder"
+}

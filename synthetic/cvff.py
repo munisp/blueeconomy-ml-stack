@@ -53,8 +53,13 @@ def generate_cvff(cfg: CvffConfig = CvffConfig()) -> dict[str, pd.DataFrame]:
 
     acct_by_company = accounts.groupby("company_id")["account_id"].apply(list).to_dict()
 
+    all_accounts = accounts["account_id"].to_numpy()
+
     def acct_of(cid: str) -> str:
-        return acct_by_company[cid][rng.integers(0, len(acct_by_company[cid]))]
+        owned = acct_by_company.get(cid)
+        if not owned:  # company drew no account: route via a random account
+            return str(all_accounts[rng.integers(0, len(all_accounts))])
+        return owned[rng.integers(0, len(owned))]
 
     # --- transactions ---
     rows = []

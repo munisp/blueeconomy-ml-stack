@@ -54,19 +54,22 @@ def compute_drift(reference: pd.DataFrame, current: pd.DataFrame,
               "feature_drift": {}, "prediction_drift": None}
 
     if _HAS_EVIDENTLY:
+        import re
         report = Report(metrics=[DataDriftPreset()])
         snap = report.run(reference_data=reference[cols],
                           current_data=current[cols])
         payload = json.loads(snap.json())
+        pat = re.compile(r"ValueDrift\(column=(?P<col>[^,]+),.*threshold=(?P<thr>[0-9.]+)\)")
         for m in payload.get("metrics", []):
-            cfg = m.get("config", {})
-            col = cfg.get("column_name")
-            val = m.get("value", {})
-            if col and isinstance(val, dict):
-                result["feature_drift"][col] = {
-                    "drift_score": val.get("drift_score"),
-                    "drift_detected": val.get("drift_detected"),
-                }
+            match = pat.match(m.get("metric_name", ""))
+            if not match:
+                continue
+            thr = float(match.group("thr"))
+            score = float(m["value"])
+            result["feature_drift"][match.group("col")] = {
+                "drift_score": score, "threshold": thr,
+                "drift_detected": bool(score >= thr),
+            }
     else:
         for c in cols:
             score = psi(reference[c].to_numpy(dtype=float),

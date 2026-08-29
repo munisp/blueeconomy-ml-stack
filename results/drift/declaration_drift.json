@@ -1,0 +1,83 @@
+{
+  "ts": "2026-08-29T03:30:24Z",
+  "backend": "evidently",
+  "n_reference": 20000,
+  "n_current": 8000,
+  "feature_drift": {
+    "days_ago": {
+      "drift_score": 0.010946610008012544,
+      "threshold": 0.1,
+      "drift_detected": false
+    },
+    "declarant_prior_declarations": {
+      "drift_score": 0.027986965450757732,
+      "threshold": 0.1,
+      "drift_detected": false
+    },
+    "weight_kg": {
+      "drift_score": 0.01706219089576424,
+      "threshold": 0.1,
+      "drift_detected": false
+    },
+    "unit_value_usd_per_kg": {
+      "drift_score": 0.008452606152186215,
+      "threshold": 0.1,
+      "drift_detected": false
+    },
+    "reference_price_usd_per_kg": {
+      "drift_score": 0.010783562864309216,
+      "threshold": 0.1,
+      "drift_detected": false
+    },
+    "price_ratio_vs_reference": {
+      "drift_score": 0.0817313087584279,
+      "threshold": 0.1,
+      "drift_detected": false
+    },
+    "cif_value_usd": {
+      "drift_score": 0.012662209685947768,
+      "threshold": 0.1,
+      "drift_detected": false
+    },
+    "duty_rate_applied": {
+      "drift_score": 0.01412979454976727,
+      "threshold": 0.1,
+      "drift_detected": false
+    },
+    "duty_rate_true": {
+      "drift_score": 0.016789119634066103,
+      "threshold": 0.1,
+      "drift_detected": false
+    },
+    "duty_paid_ngn": {
+      "drift_score": 0.03963732439072425,
+      "threshold": 0.1,
+      "drift_detected": false
+    },
+    "fx_rate_ngn_usd": {
+      "drift_score": 0.0,
+      "threshold": 0.1,
+      "drift_detected": false
+    },
+    "consignee_is_shell": {
+      "drift_score": 0.0103362650425612,
+      "threshold": 0.1,
+      "drift_detected": false
+    },
+    "declarant_is_established": {
+      "drift_score": 0.005427081242326125,
+      "threshold": 0.1,
+      "drift_detected": false
+    },
+    "night_filing": {
+      "drift_score": 0.01941700571950756,
+      "threshold": 0.1,
+      "drift_detected": false
+    }
+  },
+  "prediction_drift": {
+    "column": "price_ratio_vs_reference",
+    "drift_score": 0.012366839094567735,
+    "drift_detected": false
+  }
+}

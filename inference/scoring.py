@@ -107,9 +107,12 @@ class Scorer:
 
     # ---- scoring ----
     def score(self, features: list[float], entity_id: str = "") -> ScoreResult:
-        t0 = time.perf_counter()
         version = self.splitter.route(entity_id) if entity_id else self.versions[0]
+        # Model load is outside the per-request latency budget (budget covers
+        # feature validation + ONNX execution only; cold loads are a deploy
+        # concern handled by pre-warming).
         model = self._load(version)
+        t0 = time.perf_counter()
         if model is None:
             return ScoreResult(status=STATUS_UNAVAILABLE, score=None,
                                model_name=self.model_name, model_version=version,
