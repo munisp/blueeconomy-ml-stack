@@ -2,14 +2,21 @@
 
 Fail-closed doctrine implemented end to end:
 - /health reports per-model availability, never a liveness lie
+- /score requires a verified Keycloak RS256 bearer token (production
+  profile refuses to boot without KEYCLOAK_JWKS_URL / KEYCLOAK_ISSUER /
+  KEYCLOAK_EXPECTED_AUDIENCE); /health stays public
 - /score returns 200 with status=OK only when a real model produced a real
   number; otherwise 200 with status=SCORING_UNAVAILABLE and mode=rules_only
   so callers fall back to the deterministic rules engine
 - /score NEVER fabricates a score
+- the production profile (BEML_ENV unset or "production") refuses a
+  file-based MLFLOW_TRACKING_URI (sqlite/file/bare path)
 
 Run:  uvicorn inference.service:app --port 8100
 Config via env: BEML_MODELS_ROOT (default ./models), BEML_AB_CONFIG
-(default ./inference/ab_config.yaml), BEML_LATENCY_BUDGET_MS (default 50).
+(default ./inference/ab_config.yaml), BEML_LATENCY_BUDGET_MS (default 50),
+BEML_ENV, KEYCLOAK_JWKS_URL / KEYCLOAK_ISSUER / KEYCLOAK_EXPECTED_AUDIENCE,
+MLFLOW_TRACKING_URI.
 """
 
 from __future__ import annotations
@@ -17,10 +24,12 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from pydantic import BaseModel, Field
 
+from inference.auth import build_authenticator_from_env, require_auth
 from inference.scoring import STATUS_OK, Scorer
+from training.common import validate_tracking_uri
 
 MODELS_ROOT = Path(os.environ.get("BEML_MODELS_ROOT", "models"))
 AB_CONFIG = os.environ.get("BEML_AB_CONFIG", "inference/ab_config.yaml")
@@ -57,6 +66,11 @@ def _build_scorers() -> dict[str, Scorer]:
 
 
 app = FastAPI(title="BlueEconomy ML Scoring (fail-closed, CPU)", version="0.1.0")
+# Boot gates (fail closed): Keycloak coordinates mandatory in production;
+# a file-based MLflow tracking URI is refused in production. The inference
+# path records no runs, so the URI itself is not required here.
+app.state.authenticator = build_authenticator_from_env()
+validate_tracking_uri(required_in_production=False)
 scorers = _build_scorers()
 
 
@@ -78,7 +92,7 @@ def health() -> dict:
             "doctrine": "deterministic rules first; ML augments; fail-closed"}
 
 
-@app.post("/score/{model_key}")
+@app.post("/score/{model_key}", dependencies=[Depends(require_auth)])
 def score(model_key: str, req: ScoreRequest) -> dict:
     scorer = scorers.get(model_key)
     if scorer is None:

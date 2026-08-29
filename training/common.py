@@ -21,6 +21,52 @@ except ImportError:  # pragma: no cover - environment-dependent
 RESULTS_DIR = Path(os.environ.get("BEML_RESULTS_DIR", "results"))
 
 
+class BootError(RuntimeError):
+    """Fatal configuration error. The process must refuse to start."""
+
+
+# MLflow tracking URI schemes that keep experiment truth on a local file —
+# never acceptable as the production backend (the historical mlflow.db
+# SQLite accident). Production tracks against the PostgreSQL-backed MLflow
+# server (http/https URI from MLFLOW_TRACKING_URI).
+_FILE_BASED_TRACKING_SCHEMES = ("", "file", "sqlite")
+
+
+def _tracking_uri_scheme(uri: str) -> str:
+    if "://" in uri:
+        return uri.split("://", 1)[0].strip().lower()
+    # Bare path (e.g. "./mlruns" or "mlflow.db") — file-based.
+    return ""
+
+
+def validate_tracking_uri(env: dict | None = None, *, required_in_production: bool = True) -> None:
+    """Fail-closed MLflow tracking-URI contract.
+
+    In the production profile (BEML_ENV unset or ``production``) a file-based
+    MLFLOW_TRACKING_URI (sqlite, file://, bare path) is always a boot error,
+    and — when ``required_in_production`` — the URI must be set at all
+    (PostgreSQL-backed MLflow server). Non-production profiles are exempt so
+    local dev may use the file backend.
+    """
+    env = os.environ if env is None else env
+    production = (env.get("BEML_ENV") or "").strip().lower() in ("", "production")
+    if not production:
+        return
+    uri = (env.get("MLFLOW_TRACKING_URI") or "").strip()
+    if not uri:
+        if required_in_production:
+            raise BootError(
+                "production profile requires MLFLOW_TRACKING_URI pointing at the "
+                "PostgreSQL-backed MLflow tracking server"
+            )
+        return
+    if _tracking_uri_scheme(uri) in _FILE_BASED_TRACKING_SCHEMES:
+        raise BootError(
+            f"production profile refuses file-based MLFLOW_TRACKING_URI {uri!r}; "
+            "configure the PostgreSQL-backed MLflow tracking server"
+        )
+
+
 def seed_everything(seed: int) -> None:
     random.seed(seed)
     np.random.seed(seed)
@@ -61,6 +107,9 @@ class RunTracker:
     """
 
     def __init__(self, experiment: str, run_name: str):
+        # Fail closed before any run is recorded: the production profile
+        # never tracks to a file-based (SQLite/file) MLflow backend.
+        validate_tracking_uri()
         self.experiment, self.run_name = experiment, run_name
         self._record = {"experiment": experiment, "run_name": run_name,
                         "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),

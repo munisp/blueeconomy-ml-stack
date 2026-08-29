@@ -9,7 +9,14 @@ actual charts/manifests. Nothing here is a live manifest.
    - Image built from repo root: `pip install -r requirements.txt` then
      `uvicorn inference.service:app --port 8100`.
    - Env: `BEML_MODELS_ROOT`, `BEML_AB_CONFIG`, `BEML_LATENCY_BUDGET_MS`,
-     `MLFLOW_TRACKING_URI`.
+     `MLFLOW_TRACKING_URI`, `BEML_ENV=production`, `KEYCLOAK_JWKS_URL`,
+     `KEYCLOAK_ISSUER`, `KEYCLOAK_EXPECTED_AUDIENCE`.
+   - `/score` requires a verified Keycloak RS256 bearer token (the pod
+     refuses to boot without the Keycloak triple in production); `/health`
+     stays public.
+   - `MLFLOW_TRACKING_URI` must point at the PostgreSQL-backed MLflow
+     server; a file-based URI (sqlite/file/bare path) refuses boot in the
+     production profile.
    - Resources: requests 250m CPU / 512Mi, limits 2 CPU / 1Gi (models are
      <5MB; the budget is for feature assembly + onnxruntime).
    - Models mounted read-only from the model artifact store (see below).

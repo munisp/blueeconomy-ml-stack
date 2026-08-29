@@ -61,7 +61,10 @@ pip install -r requirements-optional.txt   # ray + evidently (optional)
 python -m synthetic.cli --out data/synthetic
 
 # 2. train all three model families (MLflow if MLFLOW_TRACKING_URI set,
-#    else results/runs.jsonl)
+#    else results/runs.jsonl). PRODUCTION: MLFLOW_TRACKING_URI is mandatory
+#    and must target the PostgreSQL-backed MLflow server — a file-based URI
+#    (sqlite:///mlflow.db, file:..., bare path) refuses boot when BEML_ENV is
+#    unset or "production". mlflow.db must never be committed (gitignored).
 python -m training.tabular --version 0.1.0
 python -m training.gnn     --version 0.1.0
 python -m training.anomaly --version 0.1.0
