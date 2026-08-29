@@ -7,3 +7,4 @@ results/runs.jsonl
 results/notifications.jsonl
 results/scoring_log.jsonl
 .venv/
+mlflow.db
