@@ -8,9 +8,26 @@ models has ever seen, let alone been validated on, a real fraud case.
 License for all model artifacts: Apache-2.0. Weights are products of the
 training runs documented in `results/RUNS.md`.
 
+**Run-backing guarantee:** every `models/<name>/<semver>/` directory in this
+registry has a corresponding real training-run entry in `results/runs.jsonl`
+with a matching metrics hash, enforced by `python -m pipelines.registry_check`
+(regression test: `tests/test_registry.py`). A version without a logged run
+is not a release.
+
 ---
 
-## declaration-fraud-mlp — 0.1.0
+## declaration-fraud-mlp — 0.1.0 (PRODUCTION)
+
+> **Registry correction (ML-1):** a `0.1.1` version was briefly "promoted"
+> on 2026-08-29, but it was a same-seed duplicate of 0.1.0 (byte-identical
+> artifacts, zero metric improvement, no logged training run) that slipped
+> through a gate shortcut when no PRODUCTION pointer existed. The 0.1.1
+> promotion has been rescinded: its artifacts are removed (retained in git
+> history), `PRODUCTION` points at 0.1.0, and an append-only
+> `REJECTED_DUPLICATE` correction is recorded in
+> `results/notifications.jsonl`. Full evidence: `results/RUNS.md`.
+> 0.1.0 is the only valid declaration-fraud release.
+
 
 - **Architecture:** PyTorch MLP, 11 features -> 32 -> 32 -> 1, dropout 0.15,
   post-hoc temperature calibration (T=0.9576). ~2.6k parameters. Artifacts:

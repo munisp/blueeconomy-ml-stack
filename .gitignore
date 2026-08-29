@@ -3,8 +3,6 @@ __pycache__/
 .pytest_cache/
 data/
 mlruns/
-results/runs.jsonl
-results/notifications.jsonl
 results/scoring_log.jsonl
 .venv/
 mlflow.db

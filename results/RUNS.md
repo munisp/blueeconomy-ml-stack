@@ -90,6 +90,55 @@ gate: {"incumbent": null, "decision": "promote_first_model"}
 PRODUCTION pointer -> 0.1.1 ; notification appended to results/notifications.jsonl
 ```
 
+### CORRECTION (ML-1): the 0.1.1 promotion was invalid and has been rescinded
+
+**What happened.** The cycle above retrained declaration-fraud with the same
+seed/config as 0.1.0, so the candidate was byte-identical to the incumbent.
+Because no `PRODUCTION` pointer existed for 0.1.0, the old gate took the
+`promote_first_model` shortcut and **skipped the improvement comparison
+entirely**. A real comparison would have REJECTED the candidate:
+test AUROC 0.9708187549580394 < 0.9708187549580394 + min_delta 0.001.
+
+**Why 0.1.1 was a same-seed duplicate.** sha256 of the artifacts, identical
+in `models/declaration-fraud/0.1.0/` and the removed `0.1.1/`:
+
+```
+bd84c5796b9345a5eaa76087a7ca95e5a8e7b8f317286915e21df4d2d9fd69d8  model.pt
+e5c27f60c6230ad0609e1678d01283a1ff6987d85bb6712dba2511e25a9be08e  model.onnx
+4b5a501e410a01bb7611d8231e8b365d0a20af79e067ad91f2a0f6ff8280fc8c  baseline_lightgbm.joblib
+```
+
+`0.1.1/metrics.json` differed from `0.1.0/metrics.json` only in the version
+string. There is no 0.1.1 training run in `results/runs.jsonl` (and none in
+this file beyond the cycle log above, which re-used the 0.1.0 seed/config).
+
+**Repair (history NOT rewritten).**
+- `models/declaration-fraud/0.1.1/` removed from the working tree; the
+  artifacts remain in git history for audit.
+- `models/declaration-fraud/PRODUCTION` now points explicitly at `0.1.0`.
+- Append-only correction entry with `status: REJECTED_DUPLICATE` and the
+  sha256 evidence appended to `results/notifications.jsonl`; the original
+  2026-08-29T03:31:21Z promotion record is left in place.
+
+**What the gate does now** (`pipelines/continuous_training.py:evaluate_gate`):
+- The `promote_first_model` shortcut applies ONLY when zero versions exist.
+- If versions exist but the PRODUCTION pointer is missing or dangling, the
+  candidate is compared against the LATEST existing version — the comparison
+  is never skipped — and the gate record states
+  `incumbent_source: latest_version_no_pointer`.
+- Every notification records the candidate metric and, whenever an incumbent
+  exists, the incumbent version AND metric; unreadable incumbent metrics
+  reject fail-closed.
+- Regression coverage: `tests/test_gate.py` (same-seed duplicate rejected,
+  no-pointer comparison against latest, genuine first-model promotion,
+  end-to-end `run_cycle` reject/promote paths).
+
+**Ongoing guard.** `python -m pipelines.registry_check` (test:
+`tests/test_registry.py`) fails CI if any `models/<name>/<semver>/`
+directory lacks a `results/runs.jsonl` training-run entry with a matching
+metrics hash, or if a stage pointer dangles. Every promoted version must be
+backed by a real logged run.
+
 ## Drift report (scheduled-job artifact)
 
 ```
