@@ -29,8 +29,13 @@ from pathlib import Path
 
 import numpy as np
 
+from inference.telemetry import get_tracer
+
 STATUS_OK = "OK"
 STATUS_UNAVAILABLE = "SCORING_UNAVAILABLE"
+
+# Phase-7 OTel: no-op tracer unless OTEL_EXPORTER_OTLP_ENDPOINT is set.
+_tracer = get_tracer("beml.scoring")
 
 
 class ModelUnavailableError(RuntimeError):
@@ -119,7 +124,15 @@ class Scorer:
                                mode="rules_only",
                                latency_ms=self._elapsed(t0),
                                detail=getattr(self, "_last_error", "model unavailable"))
-        x = np.asarray(features, dtype=np.float32).reshape(1, -1)
+        # Feature preparation child span: features arrive inline in the
+        # request; offline feature-fetch from the lakehouse is spanned in
+        # pipelines/extract.py. Attributes stay low-cardinality (counts
+        # only — never entity ids or raw features).
+        with _tracer.start_as_current_span("ml.score.feature_prepare") as fspan:
+            fspan.set_attribute("ml.model", self.model_name)
+            fspan.set_attribute("ml.model_version", version)
+            x = np.asarray(features, dtype=np.float32).reshape(1, -1)
+            fspan.set_attribute("ml.feature_count", int(x.shape[1]))
         if x.shape[1] != model.n_features:
             return ScoreResult(status=STATUS_UNAVAILABLE, score=None,
                                model_name=self.model_name, model_version=version,
@@ -127,7 +140,11 @@ class Scorer:
                                detail=f"feature count {x.shape[1]} != model expects "
                                       f"{model.n_features}")
         try:
-            raw = float(model.session.run(None, {"features": x})[0].reshape(-1)[0])
+            with _tracer.start_as_current_span("ml.score.inference") as ispan:
+                ispan.set_attribute("ml.model", self.model_name)
+                ispan.set_attribute("ml.model_version", version)
+                ispan.set_attribute("ml.model_kind", model.kind)
+                raw = float(model.session.run(None, {"features": x})[0].reshape(-1)[0])
         except Exception as exc:
             return ScoreResult(status=STATUS_UNAVAILABLE, score=None,
                                model_name=self.model_name, model_version=version,

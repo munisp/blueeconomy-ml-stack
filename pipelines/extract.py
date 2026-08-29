@@ -83,6 +83,16 @@ def _synthetic_fallback(name: str, seed: int) -> pd.DataFrame:
 
 def extract_dataset(name: str, cfg: ExtractionConfig) -> tuple[pd.DataFrame, dict]:
     """Return (dataframe, lineage) for one dataset, fail-closed semantics."""
+    from inference.telemetry import get_tracer
+
+    # Feature-fetch span (Phase-7 OTel; no-op when telemetry disabled).
+    with get_tracer("beml.pipelines").start_as_current_span(
+        "ml.feature_fetch", attributes={"ml.dataset": name}
+    ) as span:
+        return _extract_dataset(name, cfg, span)
+
+
+def _extract_dataset(name: str, cfg: ExtractionConfig, span) -> tuple[pd.DataFrame, dict]:
     lineage: dict = {"dataset": name}
     root = resolve_lakehouse_root()
     df = None
@@ -101,6 +111,8 @@ def extract_dataset(name: str, cfg: ExtractionConfig) -> tuple[pd.DataFrame, dic
                        reason="lakehouse absent or below volume threshold")
     lineage.update(rows=len(df), dataset_version=dataset_version(df),
                    data_source=str(df.get("data_source", pd.Series(["PRODUCTION"])).iloc[0]))
+    span.set_attribute("ml.rows", int(lineage["rows"]))
+    span.set_attribute("ml.source", str(lineage["source"]))
     return df, lineage
 
 

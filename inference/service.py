@@ -66,6 +66,11 @@ def _build_scorers() -> dict[str, Scorer]:
 
 
 app = FastAPI(title="BlueEconomy ML Scoring (fail-closed, CPU)", version="0.1.0")
+# OTel (Phase-7): no-op unless OTEL_EXPORTER_OTLP_ENDPOINT is set — the
+# sanctioned fail-open; scoring never depends on telemetry.
+from inference.telemetry import init_telemetry
+
+init_telemetry(app, service_name="blueeconomy-ml-stack", version="0.1.0")
 # Boot gates (fail closed): Keycloak coordinates mandatory in production;
 # a file-based MLflow tracking URI is refused in production. The inference
 # path records no runs, so the URI itself is not required here.
@@ -98,7 +103,16 @@ def score(model_key: str, req: ScoreRequest) -> dict:
     if scorer is None:
         return {"status": "SCORING_UNAVAILABLE", "score": None, "mode": "rules_only",
                 "detail": f"unknown model '{model_key}'"}
-    result = scorer.score(req.features, entity_id=req.entity_id)
+    # Per-model scoring span (Phase-7 OTel; no-op when telemetry disabled).
+    from inference.telemetry import get_tracer
+
+    with get_tracer("beml.inference").start_as_current_span(
+        "ml.score", attributes={"ml.model": model_key}
+    ) as span:
+        result = scorer.score(req.features, entity_id=req.entity_id)
+        span.set_attribute("ml.model_version", result.model_version or "")
+        span.set_attribute("ml.score_status", result.status)
+        span.set_attribute("ml.latency_ms", round(result.latency_ms, 3))
     payload = result.__dict__
     if result.status != STATUS_OK:
         # Explicit contract: caller MUST continue with deterministic rules only.
