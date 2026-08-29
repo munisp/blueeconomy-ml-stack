@@ -1,0 +1,65 @@
+# Local dev stack: REAL MLflow server (postgres backend store + artifact
+# volume) and a Ray head node. CPU-only. No production data flows here —
+# training runs against SYNTHETIC snapshots only.
+services:
+  mlflow-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: mlflow
+      POSTGRES_PASSWORD: mlflow
+      POSTGRES_DB: mlflow
+    volumes:
+      - mlflow-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mlflow"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v3.4.0
+    depends_on:
+      mlflow-db:
+        condition: service_healthy
+    command: >
+      mlflow server
+      --backend-store-uri postgresql://mlflow:mlflow@mlflow-db:5432/mlflow
+      --default-artifact-root /mlflow/artifacts
+      --host 0.0.0.0 --port 5000
+    ports:
+      - "5000:5000"
+    volumes:
+      - mlflow-artifacts:/mlflow/artifacts
+    environment:
+      MLFLOW_SQLALCHEMYSTORE_POOL_SIZE: "5"
+
+  ray-head:
+    image: rayproject/ray:2.49.2-cpu
+    command: ray start --head --dashboard-host=0.0.0.0 --block
+    ports:
+      - "6379:6379"     # GCS
+      - "8265:8265"     # dashboard
+      - "10001:10001"   # client server
+    shm_size: "2gb"
+    environment:
+      RAY_ADDRESS: "ray://localhost:10001"
+
+  scoring-service:
+    image: python:3.12-slim
+    working_dir: /app
+    volumes:
+      - .:/app:ro
+    command: >
+      sh -c "pip install --no-cache-dir -r requirements.txt &&
+             uvicorn inference.service:app --host 0.0.0.0 --port 8100"
+    ports:
+      - "8100:8100"
+    environment:
+      BEML_MODELS_ROOT: /app/models
+      BEML_AB_CONFIG: /app/inference/ab_config.yaml
+      BEML_LATENCY_BUDGET_MS: "50"
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+
+volumes:
+  mlflow-db-data:
+  mlflow-artifacts:

@@ -1,0 +1,17 @@
+# BlueEconomy ML stack — pinned, permissive-licensed, CPU-only default.
+# All licenses: BSD/Apache-2.0/MIT (see README license table).
+torch==2.8.0                # BSD-3-Clause  (CPU wheel by default on PyPI)
+torch-geometric==2.7.0      # MIT
+numpy==2.2.5                # BSD-3-Clause
+pandas==2.3.2               # BSD-3-Clause
+pyarrow==25.0.1             # Apache-2.0
+scikit-learn==1.7.2         # BSD-3-Clause
+lightgbm==4.6.0             # MIT
+onnx==1.18.0                # Apache-2.0
+onnxruntime==1.29.0         # MIT
+mlflow==3.4.0               # Apache-2.0
+fastapi==0.116.1            # MIT
+uvicorn==0.34.2             # BSD-3-Clause
+pydantic==2.11.4            # MIT
+PyYAML==6.0.2               # MIT
+joblib==1.5.1               # BSD-3-Clause

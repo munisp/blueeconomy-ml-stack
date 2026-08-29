@@ -1,0 +1,26 @@
+# Example CI workflow — NOT active (repository tokens here lack workflow
+# scope, so this lives outside .github/). Copy to .github/workflows/ci.yml
+# to enable. CPU-only throughout.
+name: ci
+on: [push, pull_request]
+jobs:
+  test-and-train:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -r requirements.txt pytest
+      - name: unit tests
+        run: pytest tests/ -q
+      - name: generate synthetic data
+        run: python -m synthetic.cli --out data/synthetic --declarations 5000 --transactions 8000
+      - name: train smoke (tiny epochs, CPU)
+        run: |
+          python -m training.tabular --version 0.0.0-ci --epochs 5
+          python -m training.gnn --version 0.0.0-ci --epochs 5
+          python -m training.anomaly --version 0.0.0-ci --epochs 5
+      - name: ONNX export + fail-closed inference check
+        run: |
+          python -m inference.export_onnx --model declaration-fraud --version 0.0.0-ci
+          pytest tests/test_inference_failclosed.py -q

@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+data/
+mlruns/
+results/runs.jsonl
+results/notifications.jsonl
+results/scoring_log.jsonl
+.venv/

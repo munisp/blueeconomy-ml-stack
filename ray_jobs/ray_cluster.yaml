@@ -1,0 +1,33 @@
+# Local dev Ray cluster config (ray up ray_cluster.yaml).
+# Single head node, CPU-only. For k8s use KubeRay — see deploy/README.md.
+cluster_name: blueeconomy-ml-dev
+max_workers: 0
+
+provider:
+  type: local
+  head_ip: 127.0.0.1
+  # On a real multi-node LAN, list worker_ips here; CPU-only by design.
+
+auth:
+  ssh_user: ubuntu
+
+setup_commands:
+  - pip install -r requirements.txt
+
+head_node: {}
+worker_nodes: {}
+
+# KubeRay sketch (deploy/gitops owns the real chart):
+#   apiVersion: ray.io/v1alpha1
+#   kind: RayCluster
+#   spec:
+#     headGroupSpec:
+#       rayStartParams: { dashboard-host: "0.0.0.0" }
+#       template: { spec: { containers: [{ name: ray-head, image: <ml-stack-image>,
+#         resources: { requests: { cpu: "2" }, limits: { cpu: "4" } } }] } }
+#     workerGroupSpecs:
+#       - replicas: 2
+#         groupName: cpu-workers
+#         template: { spec: { containers: [{ name: ray-worker,
+#           image: <ml-stack-image>, resources: { requests: { cpu: "2" },
+#           limits: { cpu: "4" } } }] } }

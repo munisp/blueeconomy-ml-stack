@@ -1,0 +1,11 @@
+# A/B traffic-split config consumed by inference/service.py.
+# Deterministic hash-based split on entity ID (monitoring/ab.py).
+# weights are relative; they need not sum to 1.
+salt: blueeconomy-ab-v1
+models:
+  declaration-fraud:
+    versions: ["0.1.0"]
+    weights: [1.0]
+  vessel-anomaly:
+    versions: ["0.1.0"]
+    weights: [1.0]
