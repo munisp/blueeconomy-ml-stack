@@ -20,6 +20,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
 
+from inference.events import build_publisher_from_env
 from inference.scoring import STATUS_OK, Scorer
 
 MODELS_ROOT = Path(os.environ.get("BEML_MODELS_ROOT", "models"))
@@ -58,6 +59,9 @@ def _build_scorers() -> dict[str, Scorer]:
 
 app = FastAPI(title="BlueEconomy ML Scoring (fail-closed, CPU)", version="0.1.0")
 scorers = _build_scorers()
+# Signed inference-event publisher (ml.inference.v1). None when
+# BEML_EVENT_SINK=none; misconfiguration raises here and aborts boot.
+publisher = build_publisher_from_env()
 
 
 class ScoreRequest(BaseModel):
@@ -89,4 +93,25 @@ def score(model_key: str, req: ScoreRequest) -> dict:
     if result.status != STATUS_OK:
         # Explicit contract: caller MUST continue with deterministic rules only.
         payload["fallback"] = "deterministic_rules_only"
+    if publisher is not None:
+        # Publish a signed InferenceEvent (digests only, never raw features).
+        # A publish failure does not alter the scoring response but is logged
+        # loudly so operators can alert on the broken audit trail.
+        try:
+            publisher.publish_inference(
+                model_name=result.model_name,
+                model_version=result.model_version,
+                status=result.status,
+                score=result.score,
+                mode=result.mode,
+                latency_ms=result.latency_ms,
+                entity_id=req.entity_id,
+                features=req.features,
+                detail=result.detail,
+            )
+        except Exception as exc:  # pragma: no cover - broker failure path
+            import logging
+            logging.getLogger(__name__).error(
+                "ml.inference.v1 publish failed for %s: %s", model_key, exc
+            )
     return payload
