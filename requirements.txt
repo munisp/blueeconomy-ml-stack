@@ -15,3 +15,5 @@ uvicorn==0.34.2             # BSD-3-Clause
 pydantic==2.11.4            # MIT
 PyYAML==6.0.2               # MIT
 joblib==1.5.1               # BSD-3-Clause
+cryptography==43.0.1        # BSD/Apache-2.0 (signed inference events)
+kafka-python==2.0.2         # Apache-2.0 (inference event publisher)
