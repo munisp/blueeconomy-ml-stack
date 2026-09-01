@@ -60,6 +60,25 @@ app = FastAPI(title="BlueEconomy ML Scoring (fail-closed, CPU)", version="0.1.0"
 scorers = _build_scorers()
 
 
+def _build_event_publisher():
+    """Signed InferenceEvent publisher (topic ml.inference.v1). Disabled by
+    default; when BEML_INFERENCE_EVENTS_ENABLED=true the configuration must
+    be complete or startup fails closed (EventConfigError)."""
+    from inference.events import EventConfigError, InferenceEventPublisher
+
+    try:
+        return InferenceEventPublisher.from_env()
+    except EventConfigError:
+        raise  # fail closed: never run claiming to publish while unable
+    except Exception as exc:
+        raise EventConfigError(
+            f"{EventConfigError.CODE}: publisher init failed: {exc}"
+        ) from exc
+
+
+event_publisher = _build_event_publisher()
+
+
 class ScoreRequest(BaseModel):
     entity_id: str = Field(..., description="Stable entity ID for A/B routing")
     features: list[float]
@@ -75,6 +94,7 @@ def health() -> dict:
         report[key] = availability
     degraded = any(s == "unavailable" for rep in report.values() for s in rep.values())
     return {"status": "degraded" if degraded else "ok", "models": report,
+            "inference_events": "enabled" if event_publisher is not None else "disabled",
             "doctrine": "deterministic rules first; ML augments; fail-closed"}
 
 
@@ -89,4 +109,17 @@ def score(model_key: str, req: ScoreRequest) -> dict:
     if result.status != STATUS_OK:
         # Explicit contract: caller MUST continue with deterministic rules only.
         payload["fallback"] = "deterministic_rules_only"
+    if event_publisher is not None:
+        # One signed InferenceEvent per completed score call, recording the
+        # REAL outcome (score may honestly be None on SCORING_UNAVAILABLE).
+        event_publisher.publish(
+            entity_id=req.entity_id,
+            model_name=result.model_name,
+            model_version=result.model_version,
+            status=result.status,
+            score=result.score,
+            mode=result.mode,
+            latency_ms=result.latency_ms,
+            detail=result.detail,
+        )
     return payload
