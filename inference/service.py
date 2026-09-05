@@ -6,25 +6,38 @@ Fail-closed doctrine implemented end to end:
   number; otherwise 200 with status=SCORING_UNAVAILABLE and mode=rules_only
   so callers fall back to the deterministic rules engine
 - /score NEVER fabricates a score
+- /score, /docs and /openapi.json require a verified Keycloak bearer token
+  (blueeconomy realm); when OIDC is not configured they return 503 —
+  there is no fail-open anonymous path. /health stays public (probe).
+- Request bodies are capped (BEML_MAX_BODY_BYTES, default 256 KiB) with a
+  clean 413, and every response carries HTTP security headers.
 
 Run:  uvicorn inference.service:app --port 8100
 Config via env: BEML_MODELS_ROOT (default ./models), BEML_AB_CONFIG
-(default ./inference/ab_config.yaml), BEML_LATENCY_BUDGET_MS (default 50).
+(default ./inference/ab_config.yaml), BEML_LATENCY_BUDGET_MS (default 50),
+BEML_MAX_BODY_BYTES (default 262144), BEML_OIDC_JWKS_PATH /
+BEML_OIDC_JWKS_URL / BEML_OIDC_ISSUER / BEML_OIDC_AUDIENCE.
 """
 
 from __future__ import annotations
 
 import os
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.openapi.docs import get_swagger_ui_html
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from inference.auth import AuthError, AuthSettings, Identity, JwksKeyring, verify_bearer
 from inference.scoring import STATUS_OK, Scorer
 
 MODELS_ROOT = Path(os.environ.get("BEML_MODELS_ROOT", "models"))
 AB_CONFIG = os.environ.get("BEML_AB_CONFIG", "inference/ab_config.yaml")
 LATENCY_BUDGET_MS = float(os.environ.get("BEML_LATENCY_BUDGET_MS", "50"))
+MAX_BODY_BYTES = int(os.environ.get("BEML_MAX_BODY_BYTES", str(256 * 1024)))
 
 # model registry: name -> candidate versions (A/B split from ab_config when present)
 MODEL_REGISTRY = {
@@ -56,8 +69,83 @@ def _build_scorers() -> dict[str, Scorer]:
     return scorers
 
 
-app = FastAPI(title="BlueEconomy ML Scoring (fail-closed, CPU)", version="0.1.0")
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    # OIDC optional; when configured the JWKS must load or boot fails.
+    app.state.auth_settings = AuthSettings.from_env()
+    app.state.keyring = (
+        JwksKeyring.load(app.state.auth_settings)
+        if app.state.auth_settings.oidc_configured
+        else None
+    )
+    yield
+
+
+app = FastAPI(
+    title="BlueEconomy ML Scoring (fail-closed, CPU)",
+    version="0.1.0",
+    lifespan=lifespan,
+    # API schema/docs are gated behind bearer auth below (they disclose the
+    # scoring contract); there are no unauthenticated documentation routes.
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
+)
 scorers = _build_scorers()
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    return response
+
+
+@app.middleware("http")
+async def limit_request_body(request: Request, call_next):
+    """Reject oversized request bodies with a clean 413 (DoS guard)."""
+    content_length = request.headers.get("content-length")
+    if content_length is not None:
+        try:
+            declared = int(content_length)
+        except ValueError:
+            return JSONResponse(status_code=400, content={"detail": "invalid Content-Length"})
+        if declared > MAX_BODY_BYTES:
+            return _too_large()
+    body = await request.body()
+    if len(body) > MAX_BODY_BYTES:
+        return _too_large()
+    return await call_next(request)
+
+
+def _too_large() -> JSONResponse:
+    return JSONResponse(
+        status_code=413,
+        content={"detail": "request body too large", "limit_bytes": MAX_BODY_BYTES},
+    )
+
+
+async def require_identity(request: Request) -> Identity:
+    """Verified OIDC identity or 401/503. Fail-closed: when OIDC is not
+    configured there is no anonymous fallback — 503."""
+    settings: AuthSettings = getattr(request.app.state, "auth_settings", AuthSettings())
+    keyring = getattr(request.app.state, "keyring", None)
+    if not settings.oidc_configured or keyring is None:
+        raise HTTPException(
+            status_code=503,
+            detail={"reason": "auth-oidc-unavailable",
+                    "detail": "OIDC is not configured; authenticated routes fail closed"},
+        )
+    auth = request.headers.get("authorization", "")
+    if not auth.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail={"reason": "missing-bearer"})
+    try:
+        return verify_bearer(auth.removeprefix("Bearer ").strip(), keyring, settings)
+    except AuthError as exc:
+        raise HTTPException(status_code=401, detail={"reason": exc.reason, "detail": str(exc)}) from exc
 
 
 def _build_event_publisher():
@@ -99,7 +187,7 @@ def health() -> dict:
 
 
 @app.post("/score/{model_key}")
-def score(model_key: str, req: ScoreRequest) -> dict:
+def score(model_key: str, req: ScoreRequest, identity: Identity = Depends(require_identity)) -> dict:
     scorer = scorers.get(model_key)
     if scorer is None:
         return {"status": "SCORING_UNAVAILABLE", "score": None, "mode": "rules_only",
@@ -123,3 +211,13 @@ def score(model_key: str, req: ScoreRequest) -> dict:
             detail=result.detail,
         )
     return payload
+
+
+@app.get("/openapi.json", include_in_schema=False)
+async def gated_openapi(identity: Identity = Depends(require_identity)) -> JSONResponse:
+    return JSONResponse(app.openapi())
+
+
+@app.get("/docs", include_in_schema=False)
+async def gated_docs(identity: Identity = Depends(require_identity)):
+    return get_swagger_ui_html(openapi_url="/openapi.json", title=f"{app.title} - Swagger UI")
