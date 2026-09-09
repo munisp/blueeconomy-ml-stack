@@ -91,6 +91,11 @@ app = FastAPI(
     redoc_url=None,
     openapi_url=None,
 )
+
+from inference.telemetry import init_telemetry  # noqa: E402
+
+init_telemetry(app)
+
 scorers = _build_scorers()
 
 
