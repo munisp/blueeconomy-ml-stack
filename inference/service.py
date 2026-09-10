@@ -60,6 +60,17 @@ MODEL_REGISTRY = {
     # SCORING_UNAVAILABLE (fail-closed; geo-service surfaces 409) — no
     # heuristic is ever served under this name.
     "port-congestion": {"model_name": "port-congestion", "versions": ["0.1.0"]},
+    # Phase 18: OFFLINE RL policies. All three are SHADOW-mode recommenders:
+    # a successful score is a suggested action index with policy_version,
+    # never an actuation — callers must keep a human/rules engine in the
+    # loop. Until an artifact passes the OPE gate (training/rl/train.py) and
+    # is committed, they honestly report SCORING_UNAVAILABLE.
+    "berth-allocation": {"model_name": "berth-allocation", "versions": ["0.1.0"],
+                         "shadow": True},
+    "queue-policy": {"model_name": "queue-policy", "versions": ["0.1.0"],
+                     "shadow": True},
+    "route-advice": {"model_name": "route-advice", "versions": ["0.1.0"],
+                     "shadow": True},
 }
 
 
@@ -216,6 +227,17 @@ def score(model_key: str, req: ScoreRequest, identity: Identity = Depends(requir
                 "detail": f"unknown model '{model_key}'"}
     result = scorer.score(req.features, entity_id=req.entity_id)
     payload = result.__dict__
+    if MODEL_REGISTRY[model_key].get("shadow"):
+        # Phase 18 RL recommenders: shadow-mode contract. A successful score
+        # is a SUGGESTED action index tagged with the policy version; the
+        # response never claims autonomous control, and the policy_version
+        # lets downstream recommendation logs join realized outcomes for the
+        # next OPE-gated training round. When unavailable, callers must keep
+        # using deterministic rules (fallback signalled below).
+        payload["mode"] = "shadow" if result.status == STATUS_OK else "rules_only"
+        payload["policy_version"] = result.model_version
+        payload["action_index"] = result.score
+        payload["autonomous"] = False
     if result.status != STATUS_OK:
         # Explicit contract: caller MUST continue with deterministic rules only.
         payload["fallback"] = "deterministic_rules_only"
