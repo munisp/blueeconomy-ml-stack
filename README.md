@@ -121,8 +121,26 @@ What it is NOT:
 ## Model coverage (Phase 17 audit outcomes)
 
 - **Serving registry:** `declaration-fraud`, `vessel-anomaly` (#10 dark-vessel
-  anomaly detection), and `port-congestion` (G7, see below) are the only
-  registered score routes.
+  anomaly detection), `port-congestion` (G7, see below), and the Phase-18
+  shadow-mode RL recommenders `berth-allocation`, `queue-policy`,
+  `route-advice` are the only registered score routes.
+- **Offline RL recommenders (Phase 18):** `training/rl/` trains
+  `queue-policy` and `route-advice` as LinUCB contextual bandits (single-step
+  decisions — no decision-caused state transition, so sequential RL would
+  invent structure the data lacks) and `berth-allocation` as conservative
+  CQL-H (allocation couples through berth occupancy, so it IS sequential;
+  CQL's pessimism blocks extrapolation to unlogged actions; gamma=0 until a
+  verified next-state join exists). Data is REAL logged rows only via
+  config-gated DSNs (`BEML_RL_QUEUE_PG_DSN`, `BEML_RL_BERTH_PG_DSN`,
+  `BEML_RL_ROUTE_PG_DSN`); no DSN or too little history exits honestly
+  (`INSUFFICIENT_HISTORY`) and there is NO synthetic training default.
+  Promotion is gated by off-policy evaluation (doubly-robust with IPS
+  reported): a candidate that does not beat the logged baseline policy on
+  the OPE estimate — or that strays off the logged support — is refused and
+  nothing is exported. Serving is SHADOW-mode: responses carry
+  `{"mode": "shadow", "policy_version", "action_index", "autonomous": false}`;
+  recommendations are never auto-executed. Until an artifact passes the gate
+  and is committed, all three routes report `SCORING_UNAVAILABLE`.
 - **port-congestion (G7):** training path is `training/congestion.py`, fed
   ONLY by real `port_queue_observations` rows (geo-service migration 0013)
   via `BEML_CONGESTION_PG_DSN`. Until a real artifact is trained and
