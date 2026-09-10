@@ -148,7 +148,10 @@ class Scorer:
     def _postprocess(raw: float, kind: str) -> float:
         if kind == "classifier":
             return float(1.0 / (1.0 + np.exp(-raw)))  # logit -> probability
-        return float(raw)  # autoencoder: reconstruction error is the score
+        # autoencoder: reconstruction error; regressor/policy: raw value
+        # (for "policy" the raw value IS the recommended action index;
+        # shadow-mode wrapping lives in inference/service.py)
+        return float(raw)
 
     @staticmethod
     def _elapsed(t0: float) -> float:
