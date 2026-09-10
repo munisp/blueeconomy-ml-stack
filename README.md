@@ -118,6 +118,33 @@ What it is NOT:
 - Drift/A-B infrastructure is real but its dashboards/alerting wiring is a
   deploy-wave concern (see `deploy/README.md`).
 
+## Model coverage (Phase 17 audit outcomes)
+
+- **Serving registry:** `declaration-fraud`, `vessel-anomaly` (#10 dark-vessel
+  anomaly detection), and `port-congestion` (G7, see below) are the only
+  registered score routes.
+- **port-congestion (G7):** training path is `training/congestion.py`, fed
+  ONLY by real `port_queue_observations` rows (geo-service migration 0013)
+  via `BEML_CONGESTION_PG_DSN`. Until a real artifact is trained and
+  committed under `models/port-congestion/`, the route honestly reports
+  `SCORING_UNAVAILABLE` and geo-service answers 409 — no heuristic is ever
+  served under this model name. Training exits `INSUFFICIENT_HISTORY`
+  below the minimum supervised-pair count rather than fitting noise.
+- **graph-mule-gnn (G6): deliberately excluded from serving.** The exported
+  `models/graph-mule-gnn/0.1.0/model.onnx` bakes the frozen 6,721-node
+  training context graph into the ONNX graph; executing it requires the full
+  node-feature matrix, which the per-entity `/score` contract (one feature
+  row per request) cannot supply — verified: single-row execution raises a
+  Gather index-out-of-bounds inside the frozen context. It remains a
+  training/eval artifact until a graph-context scoring API is built; it is
+  not advertised as servable anywhere.
+- **AEO / export credit scoring (#12): NO SUCH MODEL EXISTS and none is
+  served.** `declaration-fraud` scores customs declaration fraud risk; it is
+  NOT a creditworthiness model and must not be surfaced as one. Building an
+  AEO/export credit score requires real credit/outcome labels that the
+  platform does not yet collect; rather than ship a relabelled fraud model,
+  no credit-score endpoint is exposed.
+
 ## License posture
 
 All runtime dependencies are permissive-licensed (BSD/Apache-2.0/MIT);

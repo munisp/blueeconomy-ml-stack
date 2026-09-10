@@ -42,7 +42,24 @@ MAX_BODY_BYTES = int(os.environ.get("BEML_MAX_BODY_BYTES", str(256 * 1024)))
 # model registry: name -> candidate versions (A/B split from ab_config when present)
 MODEL_REGISTRY = {
     "declaration-fraud": {"model_name": "declaration-fraud", "versions": ["0.1.0"]},
+    # #10 dark-vessel anomaly detection: served through the same eval-gated,
+    # versioned registry as every model.
     "vessel-anomaly": {"model_name": "vessel-anomaly", "versions": ["0.1.0"]},
+    # G6: graph-mule-gnn is DELIBERATELY EXCLUDED from the serving registry.
+    # The exported artifact (models/graph-mule-gnn/0.1.0/model.onnx) bakes
+    # the frozen 6,721-node training context graph into the ONNX graph, so
+    # execution requires the full node-feature matrix as input — the
+    # per-entity Scorer contract (one feature row per request) cannot serve
+    # it honestly (verified: single-row scoring raises Gather
+    # index-out-of-bounds). Serving requires a graph-context scoring API
+    # change; until then the model remains a training/eval artifact only.
+    # See README "Model coverage".
+    # G7: port-congestion is trained from REAL port_queue_observations via
+    # training/congestion.py (BEML_CONGESTION_PG_DSN). Until an artifact is
+    # trained and committed, /score/port-congestion honestly reports
+    # SCORING_UNAVAILABLE (fail-closed; geo-service surfaces 409) — no
+    # heuristic is ever served under this name.
+    "port-congestion": {"model_name": "port-congestion", "versions": ["0.1.0"]},
 }
 
 
