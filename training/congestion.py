@@ -139,15 +139,21 @@ def train(args: argparse.Namespace) -> dict:
             f"port_queue_observations (< {args.min_samples}); no model "
             f"trained, registry stays SCORING_UNAVAILABLE."
         )
-    # Time-ordered holdout: last 20% of pairs is the honest out-of-sample tail.
-    split = int(len(x) * 0.8)
-    x_tr, x_te = x[:split], x[split:]
-    y_tr, y_te = y[:split], y[split:]
+    # Three-way time-ordered split (M3 honesty fix): model selection and
+    # early stopping MUST NOT see the test tail. 70% train / 15% validation
+    # (selection + early stop) / 15% test (reported ONCE, after the state
+    # chosen on validation is frozen) — the exported test MAE is then a
+    # genuinely out-of-sample number, not the best epoch's test score.
+    n = len(x)
+    split_tr = int(n * 0.70)
+    split_va = int(n * 0.85)
+    x_tr, x_va, x_te = x[:split_tr], x[split_tr:split_va], x[split_va:]
+    y_tr, y_va, y_te = y[:split_tr], y[split_tr:split_va], y[split_va:]
 
     with RunTracker(MODEL_NAME, f"{MODEL_NAME}-{args.version}") as track:
         track.log_params({
             "model": MODEL_NAME, "version": args.version, "seed": args.seed,
-            "n_train": len(x_tr), "n_test": len(x_te),
+            "n_train": len(x_tr), "n_val": len(x_va), "n_test": len(x_te),
             "horizon_minutes": args.horizon_minutes,
             "features": ",".join(FEATURES), "device": str(device),
             "data_source": df["data_source"].iloc[0],
@@ -159,6 +165,8 @@ def train(args: argparse.Namespace) -> dict:
         stopper = EarlyStopping(patience=10)
         xt = torch.tensor(x_tr).to(device)
         yt = torch.tensor(y_tr, dtype=torch.float32).to(device)
+        xv = torch.tensor(x_va).to(device)
+        yv = torch.tensor(y_va, dtype=torch.float32).to(device)
         best_state, best_val = None, np.inf
         for epoch in range(args.epochs):
             model.train()
@@ -173,15 +181,24 @@ def train(args: argparse.Namespace) -> dict:
                 total += float(loss) * len(idx)
             model.eval()
             with torch.no_grad():
-                val_mae = float(loss_fn(model(torch.tensor(x_te).to(device)),
-                                        torch.tensor(y_te, dtype=torch.float32).to(device)))
-            track.log_metrics({"train_mae": total / len(xt), "test_mae": val_mae}, step=epoch)
+                # Selection signal is the VALIDATION split only; the test
+                # split is not evaluated during training at all.
+                val_mae = float(loss_fn(model(xv), yv))
+            track.log_metrics({"train_mae": total / len(xt), "val_mae": val_mae},
+                              step=epoch)
             if val_mae < best_val:
                 best_val, best_state = val_mae, {k: v.clone() for k, v in model.state_dict().items()}
             if stopper.step(-val_mae):
-                print(f"[early-stop] epoch={epoch} best_test_mae={best_val:.4f}")
+                print(f"[early-stop] epoch={epoch} best_val_mae={best_val:.4f}")
                 break
         model.load_state_dict(best_state)
+        # Test split is touched exactly ONCE, after the validation-selected
+        # state is frozen — the reported MAE is honestly out-of-sample.
+        model.eval()
+        with torch.no_grad():
+            test_mae = float(loss_fn(
+                model(torch.tensor(x_te).to(device)),
+                torch.tensor(y_te, dtype=torch.float32).to(device)))
 
         out_dir = Path(args.out) / args.version
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -196,13 +213,19 @@ def train(args: argparse.Namespace) -> dict:
         metrics = {
             "kind": "regressor", "model": MODEL_NAME, "version": args.version,
             "horizon_minutes": args.horizon_minutes,
-            "test_mae_queue_length": best_val, "n_test": len(x_te),
+            # Selection was on the validation split; this test MAE was
+            # computed once on the frozen model (no test-set selection).
+            "val_mae_queue_length": best_val, "n_val": len(x_va),
+            "test_mae_queue_length": test_mae, "n_test": len(x_te),
+            "selection": "best epoch by validation MAE; test evaluated once "
+                         "on the frozen state (no test-set selection)",
             "features": FEATURES, "port_index": port_index,
             "data_source": "REAL:port_queue_observations",
         }
         (out_dir / "metrics.json").write_text(json.dumps(metrics, indent=2))
         track.log_artifact(out_dir / "model.onnx")
-        print(f"[done] {MODEL_NAME} {args.version}: test MAE {best_val:.3f} queue length "
+        print(f"[done] {MODEL_NAME} {args.version}: val MAE {best_val:.3f}, "
+              f"test MAE {test_mae:.3f} queue length "
               f"(n_test={len(x_te)}) -> {out_dir}")
         return metrics
 

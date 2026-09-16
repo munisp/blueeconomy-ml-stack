@@ -163,3 +163,37 @@ def test_health_stays_public(client_no_oidc):
     resp = client_no_oidc.get("/health")
     assert resp.status_code == 200
     assert "status" in resp.json()
+
+
+def test_score_role_gate_config_gated(client, monkeypatch):
+    """M5: when BEML_SCORE_REQUIRED_ROLE is set, tokens lacking the role get
+    403; when unset any verified token passes (contract defines no role)."""
+    body = {"entity_id": "e-1", "features": [0.0] * 11}
+    # Unset: any verified identity is admitted (scoring itself fails closed).
+    monkeypatch.delenv("BEML_SCORE_REQUIRED_ROLE", raising=False)
+    r = client.post("/score/declaration-fraud", json=body,
+                    headers={"Authorization": f"Bearer {_token(client._test_private_key)}"})
+    assert r.status_code == 200
+    # Set: a token without the role is refused before scoring.
+    monkeypatch.setenv("BEML_SCORE_REQUIRED_ROLE", "ml-scorer")
+    no_role = _token(client._test_private_key, realm_access={"roles": ["other"]})
+    r = client.post("/score/declaration-fraud", json=body,
+                    headers={"Authorization": f"Bearer {no_role}"})
+    assert r.status_code == 403
+    assert r.json()["detail"]["reason"] == "missing-role"
+    # With the role: admitted.
+    r = client.post("/score/declaration-fraud", json=body,
+                    headers={"Authorization": f"Bearer {_token(client._test_private_key)}"})
+    assert r.status_code == 200
+
+
+def test_score_rejects_non_finite_features(client):
+    """M4: NaN/Inf features are refused at the API boundary (422), never
+    propagated into ONNX or the signed inference event."""
+    # NaN is not strict JSON, so send a raw body (the permissive server-side
+    # parser accepts it and the request validator must refuse it).
+    r = client.post("/score/declaration-fraud",
+                    content='{"entity_id": "e-1", "features": [0.0, NaN, 0.0]}',
+                    headers={"Authorization": f"Bearer {_token(client._test_private_key)}",
+                             "Content-Type": "application/json"})
+    assert r.status_code == 422

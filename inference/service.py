@@ -27,12 +27,13 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from inference.auth import AuthError, AuthSettings, Identity, JwksKeyring, verify_bearer
-from inference.scoring import STATUS_OK, Scorer
+from inference.scoring import STATUS_OK, NonFiniteScoreError, Scorer
 
 MODELS_ROOT = Path(os.environ.get("BEML_MODELS_ROOT", "models"))
 AB_CONFIG = os.environ.get("BEML_AB_CONFIG", "inference/ab_config.yaml")
@@ -75,25 +76,30 @@ MODEL_REGISTRY = {
 
 
 def _build_scorers() -> dict[str, Scorer]:
+    from monitoring.ab import HashSplitter
     scorers = {}
     ab = None
     if Path(AB_CONFIG).is_file():
         try:
-            from monitoring.ab import HashSplitter
             ab = AB_CONFIG
         except Exception:
             ab = None
     for key, spec in MODEL_REGISTRY.items():
-        versions, weights = spec["versions"], None
+        versions, weights, salt = spec["versions"], None, "blueeconomy-ab-v1"
         if ab:
             try:
-                from monitoring.ab import HashSplitter
                 splitter = HashSplitter.from_config(ab, spec["model_name"])
-                versions, weights = splitter.versions, splitter.weights
+                # Honor the config's salt in SERVING too: offline analysis
+                # buckets with from_config(), so a serving splitter rebuilt
+                # with the default salt would route the same entity to a
+                # different version online vs offline (A/B skew).
+                versions, weights, salt = (splitter.versions,
+                                           splitter.weights, splitter.salt)
             except Exception:
                 pass  # unknown model in config -> registry default, fail-closed later
         scorers[key] = Scorer(MODELS_ROOT, spec["model_name"], versions,
-                              split=weights, latency_budget_ms=LATENCY_BUDGET_MS)
+                              split=weights, latency_budget_ms=LATENCY_BUDGET_MS,
+                              salt=salt)
     return scorers
 
 
@@ -125,6 +131,17 @@ from inference.telemetry import init_telemetry  # noqa: E402
 init_telemetry(app)
 
 scorers = _build_scorers()
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request,
+                                       exc: RequestValidationError) -> JSONResponse:
+    """422 without echoing raw input: the default FastAPI handler serializes
+    the offending payload, which crashes on non-finite floats (NaN is not
+    strict JSON) — exactly the inputs our validators reject (M4)."""
+    errors = [{"loc": list(e.get("loc", ())), "msg": e.get("msg", ""),
+               "type": e.get("type", "")} for e in exc.errors()]
+    return JSONResponse(status_code=422, content={"detail": errors})
 
 
 @app.middleware("http")
@@ -204,6 +221,16 @@ class ScoreRequest(BaseModel):
     entity_id: str = Field(..., description="Stable entity ID for A/B routing")
     features: list[float]
 
+    @field_validator("features")
+    @classmethod
+    def _features_must_be_finite(cls, value: list[float]) -> list[float]:
+        import math
+        if any(not math.isfinite(v) for v in value):
+            # Non-finite features can never yield an honest score; reject at
+            # the boundary (422) rather than propagating NaN into ONNX.
+            raise NonFiniteScoreError("features contain NaN/Inf")
+        return value
+
 
 @app.get("/health")
 def health() -> dict:
@@ -221,6 +248,19 @@ def health() -> dict:
 
 @app.post("/score/{model_key}")
 def score(model_key: str, req: ScoreRequest, identity: Identity = Depends(require_identity)) -> dict:
+    # Optional role gate (M5): the platform scoring contract
+    # (blueeconomy-contracts docs/ml-registry-contract.md) currently defines
+    # NO required realm role for /score, so the check is config-gated via
+    # BEML_SCORE_REQUIRED_ROLE (e.g. "ml-scorer") and disabled when unset —
+    # enabling it without provisioning the role on callers (geo-service
+    # service account) would break the recommendation path. When set, a
+    # verified token without the role is refused 403 (fail-closed).
+    required_role = os.environ.get("BEML_SCORE_REQUIRED_ROLE", "").strip()
+    if required_role and required_role not in identity.roles:
+        raise HTTPException(
+            status_code=403,
+            detail={"reason": "missing-role",
+                    "detail": f"role '{required_role}' is required to invoke /score"})
     scorer = scorers.get(model_key)
     if scorer is None:
         return {"status": "SCORING_UNAVAILABLE", "score": None, "mode": "rules_only",

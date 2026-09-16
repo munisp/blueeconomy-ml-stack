@@ -56,3 +56,17 @@ def test_wrong_feature_count_fails_closed():
     scorer = Scorer(MODELS, "declaration-fraud", ["0.1.0"])
     r = scorer.score([0.0] * 5, entity_id="TIN-9")
     assert r.status == STATUS_UNAVAILABLE and r.score is None
+
+
+@pytest.mark.skipif(not (MODELS / "declaration-fraud" / "0.1.0" / "model.onnx").is_file(),
+                    reason="trained 0.1.0 artifacts not present")
+def test_nan_inf_features_refused():
+    """M4: NaN/Inf inputs must never reach ONNX or be served as OK."""
+    scorer = Scorer(MODELS, "declaration-fraud", ["0.1.0"])
+    for bad in (float("nan"), float("inf"), float("-inf")):
+        feats = [0.0] * 11
+        feats[3] = bad
+        r = scorer.score(feats, entity_id="TIN-1")
+        assert r.status == STATUS_UNAVAILABLE
+        assert r.score is None
+        assert "NON_FINITE_INPUT" in r.detail
