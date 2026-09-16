@@ -49,6 +49,11 @@ from training.rl.cql import (export_linear_policy_onnx, export_policy_onnx,  # n
 TASKS = {
     "queue-policy": {
         "dsn_env": "BEML_RL_QUEUE_PG_DSN",
+        # Outcome source is separately config-gated: no inspection-outcome
+        # column exists in the declaration schema, so the reward builder
+        # refuses to run until one is explicitly configured
+        # (training/rl/data.py QUEUE_OUTCOME_SOURCES).
+        "outcome_env": "BEML_RL_QUEUE_OUTCOME_SOURCE",
         "query": rl_data.QUEUE_QUERY,
         "builder": rl_data.build_queue_replay,
         "algorithm": "linucb-contextual-bandit",
@@ -82,7 +87,12 @@ def load_replay(task: str, args: argparse.Namespace) -> rl_data.ReplayDataset:
             f"report SCORING_UNAVAILABLE for {task} (fail-closed). "
             f"There is no synthetic training default.")
     frame = rl_data.load_frame(dsn, spec["query"])
-    return spec["builder"](frame, min_samples=args.min_samples)
+    kwargs = {}
+    if "outcome_env" in spec:
+        # None when unset -> the builder raises InsufficientHistory
+        # (honest exit, registry stays SCORING_UNAVAILABLE).
+        kwargs["outcome_source"] = os.environ.get(spec["outcome_env"], "").strip() or None
+    return spec["builder"](frame, min_samples=args.min_samples, **kwargs)
 
 
 def fit_policy(replay: rl_data.ReplayDataset, algorithm: str,
