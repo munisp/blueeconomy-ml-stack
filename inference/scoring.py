@@ -37,6 +37,12 @@ class ModelUnavailableError(RuntimeError):
     """Raised when a model cannot be loaded or executed. Fail-closed signal."""
 
 
+class NonFiniteScoreError(ValueError):
+    """Raised when input features or a model output are NaN/Inf. A non-finite
+    value must never be served as status=OK (it would serialize as invalid
+    strict JSON into both the API response and the signed inference event)."""
+
+
 @dataclass
 class ScoreResult:
     status: str                       # STATUS_OK | STATUS_UNAVAILABLE
@@ -61,12 +67,15 @@ class Scorer:
 
     def __init__(self, models_root: str | Path, model_name: str,
                  versions: list[str], split: list[float] | None = None,
-                 latency_budget_ms: float = 50.0):
+                 latency_budget_ms: float = 50.0,
+                 salt: str = "blueeconomy-ab-v1"):
         from monitoring.ab import HashSplitter
         self.models_root = Path(models_root)
         self.model_name = model_name
         self.versions = versions
-        self.splitter = HashSplitter(versions, split or [1.0 / len(versions)] * len(versions))
+        self.splitter = HashSplitter(
+            versions, split or [1.0 / len(versions)] * len(versions),
+            salt=salt)
         self.latency_budget_ms = latency_budget_ms
         self._cache: dict[str, _LoadedModel | None] = {}
         self._lock = threading.Lock()
@@ -120,6 +129,13 @@ class Scorer:
                                latency_ms=self._elapsed(t0),
                                detail=getattr(self, "_last_error", "model unavailable"))
         x = np.asarray(features, dtype=np.float32).reshape(1, -1)
+        if not np.isfinite(x).all():
+            # Refuse NaN/Inf inputs: the model would propagate them into a
+            # non-finite score, which must never be served as status=OK.
+            return ScoreResult(status=STATUS_UNAVAILABLE, score=None,
+                               model_name=self.model_name, model_version=version,
+                               mode="rules_only", latency_ms=self._elapsed(t0),
+                               detail="NON_FINITE_INPUT: features contain NaN/Inf")
         if x.shape[1] != model.n_features:
             return ScoreResult(status=STATUS_UNAVAILABLE, score=None,
                                model_name=self.model_name, model_version=version,
@@ -133,6 +149,13 @@ class Scorer:
                                model_name=self.model_name, model_version=version,
                                mode="rules_only", latency_ms=self._elapsed(t0),
                                detail=f"onnx runtime failure: {exc}")
+        if not np.isfinite(raw):
+            # Fail closed on a NaN/Inf model output: serving it as OK would
+            # emit invalid strict JSON and poison the signed inference event.
+            return ScoreResult(status=STATUS_UNAVAILABLE, score=None,
+                               model_name=self.model_name, model_version=version,
+                               mode="rules_only", latency_ms=self._elapsed(t0),
+                               detail="NON_FINITE_OUTPUT: model produced NaN/Inf")
         score = self._postprocess(raw, model.kind)
         latency = self._elapsed(t0)
         if latency > self.latency_budget_ms:
