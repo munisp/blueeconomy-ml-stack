@@ -94,3 +94,54 @@ def test_congestion_training_disabled_without_dsn(monkeypatch):
 
     with pytest.raises(SystemExit, match="config-gated"):
         congestion.train(Args())
+
+
+def test_congestion_three_way_split_honesty(tmp_path, monkeypatch):
+    """M3 regression: model selection must run on a VALIDATION split and the
+    reported test MAE must be a single post-selection evaluation, never the
+    best-epoch test score."""
+    from training import congestion
+
+    monkeypatch.setenv("BEML_CONGESTION_PG_DSN", "postgres://unused-in-test")
+    monkeypatch.setattr(congestion, "load_observations",
+                        lambda dsn: _synthetic_observations(n_per_port=200))
+    # Silence mlflow-style tracking if absent.
+    monkeypatch.setattr(congestion, "RunTracker", _NullTracker)
+
+    class Args:
+        seed = 42
+        device = "cpu"
+        out = str(tmp_path / "port-congestion")
+        version = "0.0.0-test"
+        horizon_minutes = 60
+        min_samples = 50
+        hidden = 16
+        epochs = 3
+
+    metrics = congestion.train(Args())
+    assert "val_mae_queue_length" in metrics
+    assert "test_mae_queue_length" in metrics
+    assert metrics["n_val"] > 0 and metrics["n_test"] > 0
+    assert "no test-set selection" in metrics["selection"]
+    assert metrics["val_mae_queue_length"] >= 0
+    assert metrics["test_mae_queue_length"] >= 0
+
+
+class _NullTracker:
+    def __init__(self, *a, **k):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def log_params(self, *a, **k):
+        pass
+
+    def log_metrics(self, *a, **k):
+        pass
+
+    def log_artifact(self, *a, **k):
+        pass
