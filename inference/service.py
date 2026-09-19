@@ -21,6 +21,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel, Field
 
 from inference.scoring import STATUS_OK, Scorer
+from monitoring.metrics_log import log_decision
 
 MODELS_ROOT = Path(os.environ.get("BEML_MODELS_ROOT", "models"))
 AB_CONFIG = os.environ.get("BEML_AB_CONFIG", "inference/ab_config.yaml")
@@ -82,11 +83,16 @@ def health() -> dict:
 def score(model_key: str, req: ScoreRequest) -> dict:
     scorer = scorers.get(model_key)
     if scorer is None:
-        return {"status": "SCORING_UNAVAILABLE", "score": None, "mode": "rules_only",
-                "detail": f"unknown model '{model_key}'"}
+        payload = {"status": "SCORING_UNAVAILABLE", "score": None, "mode": "rules_only",
+                   "detail": f"unknown model '{model_key}'"}
+        log_decision({"model_key": model_key, **payload})
+        return payload
     result = scorer.score(req.features, entity_id=req.entity_id)
     payload = result.__dict__
     if result.status != STATUS_OK:
         # Explicit contract: caller MUST continue with deterministic rules only.
         payload["fallback"] = "deterministic_rules_only"
+    # Every decision (including SCORING_UNAVAILABLE) is logged: unavailability
+    # is a first-class operational metric, never hidden.
+    log_decision({"model_key": model_key, **payload})
     return payload
