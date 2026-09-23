@@ -114,6 +114,24 @@ class Scorer:
             self._cache[version] = loaded
             return loaded
 
+    # ---- warmup ----
+    def warmup(self) -> dict[str, bool]:
+        """Eagerly load every registered version (same fail-closed path as
+        the first score call). Returns {version: loaded?}. A version that
+        fails to load stays cached as a failure, so warmup errors are
+        honestly surfaced by later score() calls as SCORING_UNAVAILABLE —
+        warmup never fabricates availability."""
+        import logging
+        result = {}
+        for version in self.versions:
+            loaded = self._load(version)
+            result[version] = loaded is not None
+            if loaded is None:
+                logging.getLogger(__name__).warning(
+                    "warmup failed for %s@%s: %s", self.model_name, version,
+                    getattr(self, "_last_error", "unknown"))
+        return result
+
     # ---- scoring ----
     def score(self, features: list[float], entity_id: str = "") -> ScoreResult:
         version = self.splitter.route(entity_id) if entity_id else self.versions[0]

@@ -112,7 +112,27 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         if app.state.auth_settings.oidc_configured
         else None
     )
+    # Startup warmup: eagerly load every promoted/registered model version so
+    # the first /score request never pays the ONNX cold-load cost. Fail-closed
+    # is preserved: a version that fails warmup is cached as a failure, is
+    # logged, and later score calls honestly report SCORING_UNAVAILABLE for it
+    # (the lazy _load path in scoring.py is unchanged). Warmup runs off the
+    # event loop; ONNX thread bounds stay as configured in scoring.py.
+    import asyncio
+    import logging
+    log = logging.getLogger("inference.warmup")
+    for key, scorer in scorers.items():
+        results = await asyncio.to_thread(scorer.warmup)
+        failed = [v for v, ok in results.items() if not ok]
+        if failed:
+            log.warning("model %s: warmup failed for versions %s "
+                        "(fail-closed: scores will report SCORING_UNAVAILABLE)",
+                        key, failed)
     yield
+    # Drain batched inference events on shutdown (publish() no longer flushes
+    # per request; close() flushes pending batches before exiting).
+    if event_publisher is not None:
+        await asyncio.to_thread(event_publisher.close)
 
 
 app = FastAPI(

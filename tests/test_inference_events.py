@@ -28,16 +28,35 @@ from inference.events import (
 )
 
 
+class FakeFuture:
+    """Stand-in for kafka.producer.future.FutureRecordMetadata."""
+
+    def __init__(self) -> None:
+        self.errbacks: list = []
+
+    def add_errback(self, fn):
+        self.errbacks.append(fn)
+        return self
+
+
 class FakeProducer:
     def __init__(self) -> None:
         self.sent: list[tuple[str, bytes]] = []
         self.flushed = 0
+        self.closed = 0
+        self.futures: list[FakeFuture] = []
 
     def send(self, topic: str, value: bytes):
         self.sent.append((topic, value))
+        fut = FakeFuture()
+        self.futures.append(fut)
+        return fut
 
     def flush(self):
         self.flushed += 1
+
+    def close(self, timeout: float = 10.0):
+        self.closed += 1
 
 
 def _key() -> Ed25519PrivateKey:
@@ -113,10 +132,33 @@ def test_publisher_sends_signed_envelope_to_ml_inference_topic():
     assert len(producer.sent) == 1
     topic, payload = producer.sent[0]
     assert topic == TOPIC_INFERENCE
-    assert producer.flushed == 1
+    # No per-request flush: batching/linger handles delivery; flush happens
+    # only via close() at shutdown.
+    assert producer.flushed == 0
     wire = json.loads(payload)
     assert wire["eventId"] == signed["eventId"]
     _verify(wire, key.public_key())
+
+
+def test_publisher_close_flushes_pending_batches():
+    pub = InferenceEventPublisher(producer=FakeProducer(), private_key=_key())
+    pub.close()
+    assert pub._producer.closed == 1
+
+
+def test_async_delivery_failure_logged_not_hidden(caplog):
+    key = _key()
+    producer = FakeProducer()
+    pub = InferenceEventPublisher(producer=producer, private_key=key)
+    with caplog.at_level("ERROR"):
+        pub.publish(
+            entity_id="decl-9", model_name="m", model_version="1",
+            status="OK", score=0.1, mode="ml", latency_ms=1.0,
+        )
+        # Simulate the broker asynchronously failing the batched record.
+        assert len(producer.futures[0].errbacks) == 1
+        producer.futures[0].errbacks[0](RuntimeError("async broker down"))
+    assert "async broker down" in caplog.text
 
 
 def test_tampered_envelope_fails_verification():
