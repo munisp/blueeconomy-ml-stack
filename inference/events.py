@@ -301,10 +301,19 @@ class InferenceEventPublisher:
             )
         from kafka import KafkaProducer
 
+        # Batching/ordering config: the producer batches per-partition
+        # (linger.ms + batch.size) so /score never blocks on a broker ack
+        # round-trip. With acks=all + enable_idempotence, Kafka preserves
+        # per-partition ordering and at-least-once delivery even with
+        # batching; events are keyed implicitly by partition. Delivery
+        # failures surface via the error callback in publish(); pending
+        # batches are drained by close() on shutdown.
+        linger_ms = int(e.get("BEML_KAFKA_LINGER_MS", "20"))
         producer: Producer = KafkaProducer(
             bootstrap_servers=bootstrap.split(","),
             acks="all",
             enable_idempotence=True,
+            linger_ms=linger_ms,
         )
         return cls(
             producer=producer,
@@ -341,8 +350,26 @@ class InferenceEventPublisher:
         )
         signed = sign_envelope(envelope, self._key, self._kid)
         try:
-            self._producer.send(TOPIC_INFERENCE, json.dumps(signed).encode("utf-8"))
-            self._producer.flush()
+            # No per-request flush(): the producer batches records in the
+            # background (linger.ms/batch.size) so scoring never waits on a
+            # broker round-trip. Delivery failure of this record is reported
+            # asynchronously via add_errback — logged honestly, never used to
+            # alter the already-computed score result.
+            self._producer.send(
+                TOPIC_INFERENCE, json.dumps(signed).encode("utf-8")
+            ).add_errback(
+                lambda exc, eid=entity_id: log.error(
+                    "failed to publish InferenceEvent for %s: %s", eid, exc
+                )
+            )
         except Exception as exc:  # honest logging, never silent
             log.error("failed to publish InferenceEvent for %s: %s", entity_id, exc)
         return signed
+
+    def close(self, timeout: float = 10.0) -> None:
+        """Drain pending batches (flush) and close the producer. Called from
+        the service lifespan on shutdown so batched events are not lost."""
+        try:
+            self._producer.close(timeout=timeout)
+        except Exception as exc:  # honest logging on shutdown path too
+            log.error("failed to close InferenceEvent producer cleanly: %s", exc)
